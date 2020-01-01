@@ -1,0 +1,59 @@
+(Langmuir CrossFire)
+(This file is for testing cutting feed rates for Aluminum, 11Ga, using variables in the values below)
+( Cutter conditions: 40A, 55PSI, Expected IPM: 100)
+(original posted by Mike_C on CrossFire Forum, Dec. 26, 2019)
+#100 = 100 (Center Feed rate - from Mfr table)
+#101 = 5 (Feed Rate Increase per test cut)
+#102 = 0 (Y Starting position)
+#103 = .25 (Y axis incremental move per cut)
+#104 = 3 (X axis length of test cut)
+#105 = 10 (Number of test lines to cut)
+#106 = .5 (Outside cut offset)
+#107 = [#104 + #106] (Length of cutout)
+#108 = [[#103 * #105] + #103 + #106] (Height of cutout)
+#109 = [#100 - [#101 * [#105 / 2]]] (Starting Feed Rate, center_feed_rate-feed_rate_increment*number_of_test lines/2)
+#110 = 2000 (pause after cut)
+#120 = 1000 (Start Pierce Delay in Milliseconds)
+#121 = 600 (Main Pierce Delay in Milliseconds)
+
+G90
+G70
+
+(2D Profile1)
+#102 = [#106] (Y start of first test cut)
+#104 = [#104 + #106] (X start of first test cut)
+G0 X[#106] Y[#102]
+M3
+G4 P[#120] (Starting Pierce)
+G1 X[#104] F[#109]
+#109 = [#109 + #101] (Incremental Feedrate)
+M5
+#102 = [#102 + #103] (Incremental Y Move)
+G4 P[#110] (Pause after cut)
+G0 X[#106] Y[#102]
+M98 P0001 L[#105-1]
+
+(Cutout)
+G0 X-0.1 Y[#108]
+M3
+G4 P[#121]
+G1 X[#107+#106] Y[#108] F[#100]  (Cutout uses Center Feed Rate)
+X[#107+#106] Y0
+X0 Y0
+X0 Y[#108]
+M5
+
+M30 (End Of Program)
+
+(Sub Program)
+O0001
+M3
+G4 P[#121] (Dwell in Milliseconds)
+G1 X[#104] F[#109]  (slots use accumulating feedrate)
+#109 = [#109 + #101] (Incremental Feedrate)
+M5
+#102 = [#102 + #103] (Incremental Y Move)
+G4 P[#110] (Pause after cut)
+G0 X[#106] Y[#102]
+M99
+%
