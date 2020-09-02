@@ -1,0 +1,214 @@
+function OnAbout(event)
+   ctrl = event:GetTextCtrl()
+   ctrl:AppendText("Mach3 plasma post processor, TWS THC version\n")
+   ctrl:AppendText("\n")
+   ctrl:AppendText("Modified plasma post for machines with Z and millisecond fix\n")
+   ctrl:AppendText("\n")
+   ctrl:AppendText("Modal G-codes and coordinates\n")
+   ctrl:AppendText("Comments enclosed with ( and )\n")
+   ctrl:AppendText("M03/M05 turn the torch on/off\n")
+   ctrl:AppendText("Incremental IJ\n")
+end
+--  revision 6/7/20
+--  modified to add M1 Code after the start of each operation
+
+--  revision 6/3/20
+--  modified to add Z axis and code to support alignment, etc.
+
+--  revision 10/10/19 (from jamesdhatch)
+--  Added time * 1000 to convert seconds to milliseconds for Mach 3 G04 seconds bug
+
+--  revision 3/2/07
+--  Removed final safety move. This is now done in SheetCam
+
+--   revision 7/10/05
+--   Added new arc handling
+
+--   revision 11/7/05
+--   Moved torch to cut height when preheating
+--   Added dummy spindle speed to prevent Mach2 throwing a zero spindle speed error
+
+--   revision 9/10/04
+--   Added preheat
+
+--   revision 28/6/04
+--   Replaced startx,y,z with currentx,y,z
+
+--   created 28/5/04
+--   Based on Mach2 metric.post
+
+--Put your switch offset value here in MILLIMETRES
+switchOffset = 2.794
+
+
+function OnInit()
+
+   post.SetCommentChars ("()", "[]")  --make sure ( and ) characters do not appear in system text
+   post.Text (" (Filename: ", fileName, ")\n")
+   post.Text (" (Post processor: ", postName, ")\n")
+   post.Text (" (Date: ", date, ")\n")
+   if(scale == metric) then
+      post.Text (" G21 (Units: Metric)\n") --metric mode
+   else
+      post.Text (" G20 (Units: Inches)\n") --inch mode
+   end
+   post.Text (" G53 G90 G91.1 G40\n S500\n")
+--   post.Text (" G28.1 Z2.6 F40 (Home Z)\n F1\n")
+
+   firstPierce = false -- used to control longer pierce time on first pierce
+   newOperation = true -- used to trigger insert of M1 code
+   
+   bigArcs = 1 --stitch arc segments together
+   minArcSize = 0.05 --arcs smaller than this are converted to moves
+end
+
+function OnNewLine()
+   post.Text ("N")
+   post.Number (lineNumber, "0000")
+   lineNumber = lineNumber + 10
+end
+
+
+function OnFinish()
+   post.Text (" M05 \n")
+   endZ = safeZ
+   post.Text (" G01 Z")
+   post.Number (safeZ * scale, "0.0000")
+   post.Eol()
+   post.Text (" M30\n")
+end
+
+function OnRapid()
+   if(math.hypot(currentX - endX, currentY - endY) < 0.001) then return end
+--   post.Text (" (DEBUG: OnRapid)\n")
+   post.ModalText (" G00")
+   post.ModalNumber (" X", endX * scale, "0.0000")
+   post.ModalNumber (" Y", endY * scale, "0.0000")
+   post.ModalNumber (" Z", endZ * scale, "0.0000")
+   post.Eol()
+   if (newOperation) then
+     post.Text (" M1 (Stopped to confirm alignment)\n")
+     newOperation = false
+   end
+     
+end
+
+function OnMove()
+   if(math.hypot(currentX - endX, currentY - endY) < 0.001) then return end
+--   post.Text (" (DEBUG: OnMove)\n")
+   post.ModalText (" G01")
+   post.ModalNumber (" X", endX * scale, "0.0000")
+   post.ModalNumber (" Y", endY * scale, "0.0000")
+   post.ModalNumber (" Z", endZ * scale, "0.0000")
+   post.ModalNumber (" F", feedRate * scale, "0.0###")
+   post.Eol()
+end
+
+function OnArc()
+   if(arcAngle <0) then
+      post.ModalText (" G03")
+   else
+      post.ModalText (" G02")
+   end
+   post.NonModalNumber (" X", endX * scale, "0.0000")
+   post.NonModalNumber (" Y", endY * scale, "0.0000")
+   post.ModalNumber (" Z", endZ * scale, "0.0000")
+   post.Text (" I")
+   post.Number ((arcCentreX - currentX) * scale, "0.0000")
+   post.Text (" J")
+   post.Number ((arcCentreY - currentY) * scale, "0.0000")
+   post.ModalNumber (" F", feedRate * scale, "0.0###")
+   post.Eol()
+end
+
+
+function OnPenDown()
+   local dZ,F   -- declare deltaZ and Feedrate variables
+   dZ = (pierceHeight-cutHeight)* scale -- get deltaZ in tool units
+   
+   post.Text (" M01\n")  -- insert Stop code to enable debbugging
+--   post.Text (" (DEBUG: OnPenDown)\n")
+   if (preheat > 0.001) then
+      post.ModalText (" G00")
+      post.ModalNumber (" Z", cutHeight * scale, "0.0000")
+      post.Text (" G04 P")
+      post.Number (preheat,"0.###")
+      post.Eol()
+   end
+   -- do Z calibration cycle
+   post.ModalText (" G31 Z-2 (calibrate Z)")
+   post.ModalNumber (" F", 40, "0.0###")
+   post.Eol()
+
+   post.ModalText(" G92 Z")
+   post.Number(-switchOffset * scale, "0.0###")
+   post.Eol()
+   
+   post.ModalText (" G01")
+   post.ModalNumber (" Z", pierceHeight * scale, "0.0000")
+   post.ModalNumber (" F", 40, "0.0###")
+   post.Eol()
+   
+   post.Text (" M03\n")
+   if (pierceDelay > 0.001) then
+      if (dZ > 0.005) then
+         F = (dZ * 60)/pierceDelay  -- calculate feed rate (IPM), should also work for metric but not tested
+         post.ModalText (" G01")
+         post.ModalNumber (" Z", cutHeight * scale, "0.0000")
+         post.ModalNumber (" F", F, "0.0###")
+         post.Eol()
+      else
+        post.Text (" G04 P")
+        post.Number (pierceDelay*1000,"0.###")
+        post.Eol()
+      end
+   end
+end
+
+
+function OnPenUp()
+--   post.Text (" (DEBUG: OnPenUp)\n")
+   post.Text (" M05\n")
+   endZ = safeZ
+--   post.ModalText (" G01")
+--   post.ModalNumber (" Z", endZ * scale, "0.0000")
+--   post.Eol()
+   if (endDelay > 0) then
+      post.Text (" G04 P")
+      post.Number (endDelay*1000,"0.###")
+      post.Eol()
+   end
+   post.ModalText (" G01")
+   post.ModalNumber (" Z", endZ * scale, "0.0000")
+   post.Eol()
+end
+
+
+function OnNewOperation()
+   post.Text (" (Operation: ", operationName, ")\n")
+   newOperation = true
+end
+
+function OnComment()
+  post.Text(" (",commentText,")\n")
+end
+
+function OnToolChange()
+   post.Text (" (Tool:", toolName, ")\n")
+   post.CancelModalNumbers()
+end
+
+function OnNewPart()
+   post.Text(" (Part: ",partName,")\n");
+end
+
+function OnDrill()
+--   post.Text (" (DEBUG: OnDrill)\n")
+   OnRapid()
+   OnPenDown()
+   endZ = drillZ
+   OnMove()
+   OnPenUp()
+   endZ = safeZ
+   OnRapid()
+end
